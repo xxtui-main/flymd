@@ -3424,8 +3424,14 @@ function showModeMenu() {
       if (mode !== 'edit') { mode = 'edit'; try { preview.classList.add('hidden') } catch {}; try { editor.focus() } catch {}; try { syncToggleButton() } catch {} }
     } },
     { label: '阅读', accel: 'Ctrl+R', action: async () => {
+      // 先切到预览再退出所见，避免退出所见时根据旧 mode 隐藏预览
+      if (mode !== 'preview') {
+        mode = 'preview'
+        try { preview.classList.remove('hidden') } catch {}
+        try { await renderPreview() } catch {}
+      }
       try { if (wysiwyg) await setWysiwygEnabled(false) } catch {}
-      if (mode !== 'preview') { mode = 'preview'; try { preview.classList.remove('hidden') } catch {}; try { await renderPreview() } catch {}; try { syncToggleButton() } catch {} }
+      try { syncToggleButton() } catch {}
     } },
     { label: '所见', accel: 'Ctrl+W', action: () => { void setWysiwygEnabled(true) } },
   ])
@@ -3600,8 +3606,37 @@ function bindEvents() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); guard(insertLink)(); return }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); await toggleWysiwyg(); return }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'r') { e.preventDefault(); wysiwygEnterToRenderOnly = !wysiwygEnterToRenderOnly; try { const b = document.getElementById('btn-wysiwyg') as HTMLDivElement | null; if (b) b.title = (wysiwyg ? '\u6240\u89c1\u6a21\u5f0f' : '') + (wysiwygEnterToRenderOnly ? ' - \u56de\u8f66\u518d\u6e32\u67d3' : ' - \u5373\u65f6\u6e32\u67d3') + ' (Ctrl+W)'; } catch {}; return }
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'r') { e.preventDefault(); try { if (wysiwyg) await setWysiwygEnabled(false) } catch {}; if (mode !== 'preview') { mode = 'preview'; try { preview.classList.remove('hidden') } catch {}; try { await renderPreview() } catch {}; try { syncToggleButton() } catch {} } return }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') { e.preventDefault(); await toggleMode(); return }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      try { e.stopPropagation(); /* 防止编辑器内部再次处理 */ } catch {}
+      try { (e as any).stopImmediatePropagation && (e as any).stopImmediatePropagation() } catch {}
+      try {
+        if (wysiwyg) {
+          // 先确定进入“阅读”(预览)状态，再退出所见，避免退出所见时根据旧 mode 隐藏预览
+          mode = 'preview'
+          try { preview.classList.remove('hidden') } catch {}
+          try { await renderPreview() } catch {}
+          try { await setWysiwygEnabled(false) } catch {}
+          try { syncToggleButton() } catch {}
+          return
+        }
+      } catch {}
+      if (mode !== 'preview') {
+        mode = 'preview'
+        try { preview.classList.remove('hidden') } catch {}
+        try { await renderPreview() } catch {}
+        try { syncToggleButton() } catch {}
+      }
+      return
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+      e.preventDefault();
+      try { e.stopPropagation() } catch {}
+      try { (e as any).stopImmediatePropagation && (e as any).stopImmediatePropagation() } catch {}
+      try { if (wysiwyg) await setWysiwygEnabled(false) } catch {}
+      await toggleMode();
+      return
+    }
     if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); guard(formatBold)(); if (mode === 'preview') void renderPreview(); else if (wysiwyg) scheduleWysiwygRender(); return }
     if (e.ctrlKey && e.key.toLowerCase() === 'i') { e.preventDefault(); guard(formatItalic)(); if (mode === 'preview') void renderPreview(); else if (wysiwyg) scheduleWysiwygRender(); return }
     // 文件操作快捷键
@@ -3653,7 +3688,7 @@ function bindEvents() {
         return
       }
     } catch (e) { showError('操作失败', e) }
-  }))
+  }), { capture: true })
   if (btnNew) btnNew.addEventListener('click', guard(async () => {
     try {
       const lib = document.getElementById('library') as HTMLDivElement | null
@@ -3698,7 +3733,7 @@ function bindEvents() {
       const t = ev.target as Node
       if (lib && !lib.contains(t)) showLibrary(false)
     } catch {}
-  })
+  }, { capture: true })
   if (btnAbout) btnAbout.addEventListener('click', guard(() => showAbout(true)))
   if (btnUploader) btnUploader.addEventListener('click', guard(() => openUploaderDialog()))
 
