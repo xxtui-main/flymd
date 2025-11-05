@@ -392,8 +392,17 @@ body > .block-menu { display: none !important; }
 .library .lib-ico { display: inline-block; vertical-align: middle; width: 16px; height: 16px; fill: var(--muted); stroke: var(--muted); }
 .library .lib-node:hover .lib-ico { fill: var(--fg); stroke: var(--fg); }
 /* 保留文件图标的简易形状，后续可同样替换为 SVG */
-.library .lib-ico-file { position: relative; width: 10px; height: 12px; border: 1px solid currentColor; border-radius: 2px; box-sizing: border-box; }
+.library .lib-ico-file { position: relative; width: 12px; height: 14px; border: 1px solid currentColor; border-radius: 2px; box-sizing: border-box; color: var(--muted); }
 .library .lib-ico-file::after { content: ''; position: absolute; right: 0; top: 0; width: 0; height: 0; border-left: 4px solid transparent; border-bottom: 4px solid currentColor; }
+/* 文档类型标识：在“纸张”上绘制 2-3 字母的类型缩写 */
+.library .lib-ico-file::before { position: absolute; left: 1px; top: 0; font-size: 8px; line-height: 1; color: currentColor; }
+.library .lib-ico-md::before { content: 'MD'; }
+.library .lib-ico-txt::before { content: 'TXT'; font-size: 7px; top: 1px; }
+/* 悬浮时提亮 */
+.library .lib-node:hover .lib-ico-file { color: var(--fg); }
+/* PDF：程序图标红色变体（通过 CSS 滤镜近似为红色），悬浮稍微增强 */
+.library .lib-ico-app.lib-ico-pdf { filter: grayscale(1) sepia(1) hue-rotate(-10deg) saturate(8) brightness(0.95) contrast(1.05); }
+.library .lib-node:hover .lib-ico-app.lib-ico-pdf { filter: grayscale(1) sepia(1) hue-rotate(-10deg) saturate(10) brightness(1) contrast(1.1); }
 
 /* 展示库时，为编辑/预览留出空间（不改动原有 DOM） */
 .container.with-library .editor,

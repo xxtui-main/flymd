@@ -277,11 +277,35 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         } catch (err) { console.error('[拖动] 移动失败:', err) }
       })
     } else {
-      const img = document.createElement('img')
-      img.className = 'lib-ico lib-ico-app'
-      try { img.setAttribute('src', appIconUrl) } catch {}
-      row.appendChild(img); row.appendChild(label)
-      try { const ext = (e.name.split('.').pop() || '').toLowerCase(); if (ext) row.classList.add('file-ext-' + ext) } catch {}
+      // 为文件显示类型化图标：
+      // - markdown/txt 使用简洁的“文档形状”图标，并显示 MD/TXT 标识
+      // - pdf 使用程序图标的红色变体（通过 CSS 滤镜实现区分）
+      // - 其他类型使用程序图标
+      const ext = (() => { try { return (e.name.split('.').pop() || '').toLowerCase() } catch { return '' } })()
+      let iconEl: HTMLElement
+      if (ext === 'md' || ext === 'markdown') {
+        // 按照用户要求：MD 图标保持原样（程序图标），不要改动
+        const img = document.createElement('img')
+        img.className = 'lib-ico lib-ico-app'
+        try { img.setAttribute('src', appIconUrl) } catch {}
+        iconEl = img
+      } else if (ext === 'txt') {
+        const span = document.createElement('span')
+        span.className = 'lib-ico lib-ico-file lib-ico-txt'
+        iconEl = span
+      } else if (ext === 'pdf') {
+        const img = document.createElement('img')
+        img.className = 'lib-ico lib-ico-app lib-ico-pdf'
+        try { img.setAttribute('src', appIconUrl) } catch {}
+        iconEl = img
+      } else {
+        const img = document.createElement('img')
+        img.className = 'lib-ico lib-ico-app'
+        try { img.setAttribute('src', appIconUrl) } catch {}
+        iconEl = img
+      }
+      row.appendChild(iconEl); row.appendChild(label)
+      try { if (ext) row.classList.add('file-ext-' + ext) } catch {}
 
       // 单击加载文档并保持选中
       row.addEventListener('click', async () => { saveSelection(e.path, false, row); try { await state.opts?.onOpenFile(e.path) } catch {} })
