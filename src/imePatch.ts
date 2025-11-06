@@ -1,11 +1,10 @@
-// IME 兼容补全（文档级事件委托，仅针对 #editor 且编辑模式非所见时）
+// IME compatibility patch: delegate events globally, act only on #editor in edit mode
 (function () {
   try {
     const getEditor = (): HTMLTextAreaElement | null => document.getElementById('editor') as HTMLTextAreaElement | null
     const isEditMode = (): boolean => {
       try {
         const ta = getEditor(); if (!ta) return false
-        // 仅在 textarea 可见且未禁用时认为是“编辑模式 + 非所见”
         const style = window.getComputedStyle(ta)
         const visible = style && style.display !== 'none' && style.visibility !== 'hidden'
         return visible && !ta.disabled
@@ -24,18 +23,18 @@
         case 0x60: return '`'
         case 0x2A: return '*'
         case 0x5F: return '_'
-        case 0x300A: return String.fromCharCode(0x300B) // 《》
-        case 0x3010: return String.fromCharCode(0x3011) // 【】
-        case 0xFF08: return String.fromCharCode(0xFF09) // （）
-        case 0x300C: return String.fromCharCode(0x300D) // 「」
-        case 0x300E: return String.fromCharCode(0x300F) // 『』
-        case 0x201C: return String.fromCharCode(0x201D) // “”
-        case 0x2018: return String.fromCharCode(0x2019) // ‘’
+        case 0x300A: return String.fromCharCode(0x300B) // 
+        case 0x3010: return String.fromCharCode(0x3011) // 
+        case 0xFF08: return String.fromCharCode(0xFF09) // 
+        case 0x300C: return String.fromCharCode(0x300D) // 
+        case 0x300E: return String.fromCharCode(0x300F) // 
+        case 0x201C: return String.fromCharCode(0x201D) // 
+        case 0x2018: return String.fromCharCode(0x2019) // 
         default: return null
       }
     }
 
-    // 快照：用于 input 兜底差异计算
+    // prev snapshot for diff in input
     const rememberPrev = () => {
       try {
         const ta = getEditor(); if (!ta) return
@@ -45,11 +44,56 @@
       } catch {}
     }
 
+    // IME composing guard
+    const isComposingEv = (ev: any): boolean => {
+      try { return !!(ev && (ev.isComposing || (ev.data && (ev.inputType || '').includes('Composition')))) } catch { return false }
+    }
+
+    // collapse duplicates like 《《《|》》》 -> 《|》 at caret
+    const collapseDuplicatePairAtCaret = (ta: HTMLTextAreaElement): boolean => {
+      try {
+        const s = ta.selectionStart >>> 0
+        const e = ta.selectionEnd >>> 0
+        if (s !== e) return false
+        const val = String(ta.value || '')
+        if (s === 0 || s >= val.length) return false
+
+        const PAIRS: Array<[string, string]> = [
+          ['(', ')'], ['[', ']'], ['{', '}'], ['"', '"'], ["'", "'"], ['`', '`'], ['*', '*'], ['_', '_'],
+          [String.fromCharCode(0x300A), String.fromCharCode(0x300B)], // 《》
+          [String.fromCharCode(0x3010), String.fromCharCode(0x3011)], // 【】
+          [String.fromCharCode(0xFF08), String.fromCharCode(0xFF09)], // （）
+          [String.fromCharCode(0x300C), String.fromCharCode(0x300D)], // 「」
+          [String.fromCharCode(0x300E), String.fromCharCode(0x300F)], // 『』
+          [String.fromCharCode(0x201C), String.fromCharCode(0x201D)], // “”
+          [String.fromCharCode(0x2018), String.fromCharCode(0x2019)], // ‘’
+        ]
+
+        const L0 = val[s - 1]
+        const R0 = val[s]
+        for (const [L, R] of PAIRS) {
+          if (L0 === L && R0 === R) {
+            let i = s - 1, openRun = 0; while (i >= 0 && val[i] === L) { openRun++; i-- }
+            let j = s, closeRun = 0; while (j < val.length && val[j] === R) { closeRun++; j++ }
+            if (openRun >= 2 && closeRun >= 2) {
+              const leftStart = s - openRun
+              const newVal = val.slice(0, leftStart + 1) + R + val.slice(s + closeRun)
+              ta.value = newVal
+              ta.selectionStart = ta.selectionEnd = leftStart + 1
+              return true
+            }
+          }
+        }
+        return false
+      } catch { return false }
+    }
+
     const handleBeforeInput = (ev: InputEvent) => {
       try {
         const ta = getEditor(); if (!ta) return
         if (ev.target !== ta) return
         if (!isEditMode()) return
+        if (isComposingEv(ev)) return
         const it = (ev as any).inputType || ''
         if (!/insert(Text|CompositionText|FromComposition)/i.test(it)) return
         const data = (ev as any).data as string || ''
@@ -57,7 +101,7 @@
         const s = ta.selectionStart >>> 0
         const e = ta.selectionEnd >>> 0
         const val = String(ta.value || '')
-        // 三连反引号
+        // triple backticks fence
         if (data === '```') {
           ev.preventDefault()
           const mid = val.slice(s, e)
@@ -68,7 +112,7 @@
           return
         }
         if (data.length === 1) {
-          // 跳过右侧
+          // skip right closer if already there
           const closeR = codeClose(data)
           if (!closeR && val[s] === data && s === e) { ev.preventDefault(); ta.selectionStart = ta.selectionEnd = s + 1; rememberPrev(); return }
           const close = codeClose(data)
@@ -94,11 +138,12 @@
         const ta = getEditor(); if (!ta) return
         if ((ev as any).target !== ta) return
         if (!isEditMode()) return
+        if (isComposingEv(ev)) return
         const prev = String((window as any)._edPrevVal ?? '')
         const ps = ((window as any)._edPrevSelS >>> 0) || 0
         const pe = ((window as any)._edPrevSelE >>> 0) || ps
         const cur = String(ta.value || '')
-        // LCP/LCS 差异区间
+        // diff by LCP/LCS
         let a = 0; const minLen = Math.min(prev.length, cur.length)
         while (a < minLen && prev.charCodeAt(a) === cur.charCodeAt(a)) a++
         let b = 0; const prevRemain = prev.length - a; const curRemain = cur.length - a
@@ -106,7 +151,7 @@
         const inserted = cur.slice(a, cur.length - b)
         const removed = prev.slice(a, prev.length - b)
         const hadSel = (pe > ps) || (removed.length > 0)
-        // 三连反引号（兜底）
+        // fence
         if (inserted === '```') {
           const content = hadSel ? ('\n' + removed + '\n') : ('\n\n')
           ta.value = prev.slice(0, a) + '```' + content + '```' + prev.slice(prev.length - b)
@@ -125,7 +170,7 @@
             }
             rememberPrev(); return
           }
-          // 右标记跳过
+          // skip right closer
           if (!hadSel && prev.slice(a, a + 1) === inserted) {
             ta.selectionStart = ta.selectionEnd = a + 1; rememberPrev(); return
           }
@@ -136,9 +181,18 @@
 
     document.addEventListener('beforeinput', (e) => { try { handleBeforeInput(e as any) } catch {} }, true)
     document.addEventListener('input', (e) => { try { handleInput(e as any) } catch {} }, true)
-    document.addEventListener('compositionend', (e) => { try { setTimeout(() => { try { handleInput(e as any) } catch {} }, 0) } catch {} }, true)
+    document.addEventListener('compositionend', (e) => {
+      try {
+        setTimeout(() => {
+          try {
+            handleInput(e as any)
+            const ta = getEditor(); if (ta && collapseDuplicatePairAtCaret(ta)) { rememberPrev() }
+          } catch {}
+        }, 0)
+      } catch {}
+    }, true)
 
-    // 初始快照
+    // init snapshot
     rememberPrev()
   } catch {}
 })();
