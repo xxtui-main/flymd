@@ -127,6 +127,58 @@
         const s = ta.selectionStart >>> 0
         const e = ta.selectionEnd >>> 0
         const val = String(ta.value || '')
+        // 波浪线（~ / ～）：Markdown 仅有成对的 ~~ 删除线
+        // 规则：单个 ~/～ 不触发补全；连续两个 ~~ 或 ～～（短时间内）触发补全为 "~~~~" 或 "～～～～" 并将光标置于中间
+        // 若存在选区，则变为 "~~选区~~" 或 "～～选区～～"
+        {
+          const w: any = window as any
+          if (data === '~~' || data === '~' || data === '～～' || data === '～') {
+            ev.preventDefault()
+            // 初始化状态
+            if (w._tildeTimer) { try { clearTimeout(w._tildeTimer) } catch {} w._tildeTimer = null }
+            if (!w._tildeCount) w._tildeCount = 0
+            if (w._tildeCount === 0) { w._tildeSelS = s; w._tildeSelE = e }
+            const isFull = (data === '～～' || data === '～')
+            w._tildeFull = !!isFull
+            w._tildeCount += ((data === '~~' || data === '～～') ? 2 : 1)
+            const commit = () => {
+              try {
+                const s0 = (w._tildeSelS >>> 0) || 0
+                const e0 = (w._tildeSelE >>> 0) || s0
+                const mid = val.slice(s0, e0)
+                ta.selectionStart = s0; ta.selectionEnd = e0
+                if (w._tildeCount >= 2) {
+                  // 双波浪：补全为 ~~(mid)~~ 或空选区为 "~~~~" 并把光标置中
+                  const token = (w._tildeFull ? '～～' : '~~')
+                  const ins = (e0 > s0) ? (token + mid + token) : (token + token)
+                  if (!insertUndoable(ta, ins)) {
+                    ta.value = val.slice(0, s0) + ins + val.slice(e0)
+                  }
+                  const tlen = token.length
+                  if (e0 > s0) {
+                    ta.selectionStart = s0 + tlen; ta.selectionEnd = s0 + tlen + mid.length
+                  } else {
+                    ta.selectionStart = ta.selectionEnd = s0 + tlen
+                  }
+                } else {
+                  // 单个 ~：不补全，仅插入一个 ~
+                  const ch = (w._tildeFull ? '～' : '~')
+                  if (!insertUndoable(ta, ch)) {
+                    ta.value = val.slice(0, s0) + ch + val.slice(e0)
+                  }
+                  ta.selectionStart = ta.selectionEnd = s0 + ch.length
+                }
+                rememberPrev()
+              } finally {
+                w._tildeCount = 0; w._tildeTimer = null; w._tildeFull = false
+              }
+            }
+            // 若一次输入已包含 "~~"，立即提交；否则等待连击
+            if (data === '~~' || data === '～～') { commit() }
+            else { w._tildeTimer = (setTimeout as any)(commit, 280) }
+            return
+          }
+        }
         // 三连反引号：插入围栏（可撤销）
         if (data === '```') {
           ev.preventDefault()
@@ -184,6 +236,18 @@
         const inserted = cur.slice(a, cur.length - b)
         const removed = prev.slice(a, prev.length - b)
         const hadSel = (pe > ps) || (removed.length > 0)
+        // 组合输入兜底：处理 ~~ / ～～
+        if (inserted === '~~' || inserted === '～～') {
+          const token = inserted
+          if (hadSel) {
+            ta.value = prev.slice(0, a) + token + removed + token + prev.slice(prev.length - b)
+            ta.selectionStart = a + token.length; ta.selectionEnd = a + token.length + removed.length
+          } else {
+            ta.value = prev.slice(0, a) + token + token + prev.slice(prev.length - b)
+            ta.selectionStart = ta.selectionEnd = a + token.length
+          }
+          rememberPrev(); return
+        }
         // fence
         if (inserted === '```') {
           const content = hadSel ? ('\n' + removed + '\n') : ('\n\n')
