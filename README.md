@@ -25,7 +25,7 @@
 - 位置记忆：阅读和编辑文档位置均自动记忆，下次打开改文档无论阅读还是编辑都回到记忆位置（v0.0.6正式版）
 - 自动同步：Webdav同步功能
 - 插件扩展：支持插件扩展功能，可以自行开发也可以一键安装已上架的扩展/插件
-## 📸 界面预览
+## 📸 界面预览 0.0.4版本
 <p align="center">
   <img src="https://github.com/user-attachments/assets/917ad246-1208-4585-9e10-7d2da54f2eef" width="32%" alt="Markdown Editor Screenshot 1"/>
   <img src="https://github.com/user-attachments/assets/97012b2d-4457-434d-a436-cdba796d25b4" width="32%" alt="Markdown Editor Screenshot 2"/>
