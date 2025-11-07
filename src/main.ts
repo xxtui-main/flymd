@@ -5058,6 +5058,24 @@ function bindEvents() {
         _astTimer = (setTimeout as any)(commitStar, 280)
         return
       }
+      // 波浪线：一次按键即完成成对环抱补全（~~ 语法）
+      if (e.key === '~') {
+        const ta = editor as HTMLTextAreaElement
+        const val = String(ta.value || '')
+        const s0 = ta.selectionStart >>> 0
+        const e0 = ta.selectionEnd >>> 0
+        e.preventDefault()
+        ta.selectionStart = s0; ta.selectionEnd = e0
+        const mid = val.slice(s0, e0)
+        const ins = (e0 > s0) ? ('~~' + mid + '~~') : '~~~~'
+        if (!insertUndoable(ta, ins)) {
+          ta.value = val.slice(0, s0) + ins + val.slice(e0)
+        }
+        if (e0 > s0) { ta.selectionStart = s0 + 2; ta.selectionEnd = s0 + 2 + mid.length } else { ta.selectionStart = ta.selectionEnd = s0 + 2 }
+        dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        return
+      }
       const _pairs: Array<[string, string]> = [
         ["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["*", "*"], ["_", "_"],
         ["（", "）"], ["【", "】"], ["《", "》"], ["「", "」"], ["『", "』"], ["“", "”"], ["‘", "’"]
@@ -5074,6 +5092,20 @@ function bindEvents() {
       if (e.key === 'Backspace' && s === epos && s > 0 && s < val.length) {
         const prev = val[s - 1]
         const next = val[s]
+        // 处理 ~~|~~ 的成对删除
+        if (s >= 2 && s + 2 <= val.length && val.slice(s - 2, s) === '~~' && val.slice(s, s + 2) === '~~') {
+          e.preventDefault()
+          ta.selectionStart = s - 2; ta.selectionEnd = s + 2
+          if (!deleteUndoable(ta)) {
+            ta.value = val.slice(0, s - 2) + val.slice(s + 2)
+            ta.selectionStart = ta.selectionEnd = s - 2
+          } else {
+            ta.selectionStart = ta.selectionEnd = s - 2
+          }
+          dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+          if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+          return
+        }
         if (openClose[prev] && openClose[prev] === next) {
           e.preventDefault()
           ta.selectionStart = s - 1; ta.selectionEnd = s + 1
