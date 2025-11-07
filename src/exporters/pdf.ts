@@ -20,7 +20,7 @@ function normalizeSvgSize(svgEl: SVGElement, targetWidth: number) {
     svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet')
     svgEl.setAttribute('width', String(targetWidth))
     svgEl.setAttribute('height', String(targetHeight))
-    try { (svgEl.style as any).width = '100%'; (svgEl.style as any).height = 'auto' } catch {}
+    try { (svgEl.style as any).maxWidth = '100%'; (svgEl.style as any).height = 'auto' } catch {}
   } catch {}
 }
 
@@ -37,14 +37,22 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     ...opt,
   }
 
-  // 克隆并约束版心宽度
+  // 使用当前预览宽度，避免导出时放大/缩小
+  const previewWidth = (() => {
+    try {
+      const r = (el as HTMLElement).getBoundingClientRect()
+      return Math.max(1, Math.round(r.width || (el as HTMLElement).clientWidth || 720))
+    } catch { return 720 }
+  })()
+
+  // 克隆并约束为与预览一致的宽度
   const wrap = document.createElement('div')
   wrap.style.position = 'fixed'
   wrap.style.left = '-10000px'
   wrap.style.top = '0'
-  wrap.style.width = '720px' // 约等于 A4 净宽
+  wrap.style.width = previewWidth + 'px'
   const clone = el.cloneNode(true) as HTMLElement
-  clone.style.width = '100%'
+  clone.style.width = previewWidth + 'px'
 
   // 基础样式：保证图片不溢出
   const style = document.createElement('style')
@@ -54,57 +62,23 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
   `
   clone.prepend(style)
 
-  // 处理 Mermaid：将 code/pre 转为 .mermaid 并渲染为 SVG
+  // 冻结 SVG 为屏幕显示尺寸（逐一读取原节点的像素尺寸）
   try {
-    const codeBlocks = clone.querySelectorAll('pre > code.language-mermaid')
-    codeBlocks.forEach((code) => {
+    const origSvgs = Array.from((el as HTMLElement).querySelectorAll('svg')) as SVGElement[]
+    const cloneSvgs = Array.from(clone.querySelectorAll('svg')) as SVGElement[]
+    const n = Math.min(origSvgs.length, cloneSvgs.length)
+    for (let i = 0; i < n; i++) {
       try {
-        const pre = code.parentElement as HTMLElement
-        const text = code.textContent || ''
-        const div = document.createElement('div')
-        div.className = 'mermaid'
-        div.textContent = text
-        pre.replaceWith(div)
+        const r = (origSvgs[i] as any).getBoundingClientRect?.() || { width: 0, height: 0 }
+        const w = Math.max(1, Math.round((r.width as number) || 0))
+        const h = Math.max(1, Math.round((r.height as number) || 0))
+        cloneSvgs[i].setAttribute('preserveAspectRatio', 'xMidYMid meet')
+        if (w) cloneSvgs[i].setAttribute('width', String(w))
+        if (h) cloneSvgs[i].setAttribute('height', String(h))
+        try { (cloneSvgs[i].style as any).width = w + 'px'; (cloneSvgs[i].style as any).height = 'auto' } catch {}
       } catch {}
-    })
-    const preMermaid = clone.querySelectorAll('pre.mermaid')
-    preMermaid.forEach((pre) => {
-      try {
-        const text = pre.textContent || ''
-        const div = document.createElement('div')
-        div.className = 'mermaid'
-        div.textContent = text
-        pre.replaceWith(div)
-      } catch {}
-    })
-    const nodes = Array.from(clone.querySelectorAll('.mermaid')) as HTMLElement[]
-    if (nodes.length > 0) {
-      let mermaid: any
-      try { mermaid = (await import('mermaid')).default } catch (e1) { try { mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default } catch { mermaid = null } }
-      if (mermaid) {
-        try { mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default', logLevel: 'fatal' as any }) } catch {}
-        for (let i = 0; i < nodes.length; i++) {
-          const n = nodes[i]
-          const code = n.textContent || ''
-          try {
-            const id = 'pdf-mermaid-' + i + '-' + Date.now()
-            const { svg } = await mermaid.render(id, code)
-            const wrapSvg = document.createElement('div')
-            wrapSvg.innerHTML = svg
-            const svgEl = wrapSvg.firstElementChild as SVGElement | null
-            if (svgEl) {
-              // 归一化尺寸：按页宽适配
-              normalizeSvgSize(svgEl, 720)
-              n.replaceWith(svgEl)
-            }
-          } catch {}
-        }
-      }
     }
   } catch {}
-
-  // 同步归一化所有现存 SVG（包含非 mermaid 的）
-  try { Array.from(clone.querySelectorAll('svg')).forEach((svg) => normalizeSvgSize(svg, 720)) } catch {}
 
   wrap.appendChild(clone)
   document.body.appendChild(wrap)
