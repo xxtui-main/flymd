@@ -121,7 +121,7 @@ const dict = {
     'upl.pathstyle': 'Path-Style（R2 建议）',
     'upl.acl': 'public-read',
     // WebP 转换
-    'upl.webp.enable': '上传前转为 WebP',
+    'upl.webp.enable': '转WebP[Gif直接跳过]',
     'upl.webp.quality': 'WebP 质量',
     'upl.webp.quality.hint': '范围 0.6–0.95，默认 0.85；数值越大质量越高但体积更大',
     'upl.webp.local': '本地保存也转为 WebP',
