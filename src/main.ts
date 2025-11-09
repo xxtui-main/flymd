@@ -6391,6 +6391,24 @@ function bindEvents() {
       const path = await invoke<string | null>('get_pending_open_path')
       if (path && typeof path === 'string') {
         void openFile2(path)
+      } else {
+        // macOS 兜底：尝试通过进程参数获取 Finder “打开方式”传入的文件
+        try {
+          const ua = navigator.userAgent || ''
+          const isMac = /Macintosh|Mac OS X/i.test(ua)
+          if (isMac) {
+            const proc = await import('@tauri-apps/api/process')
+            const args: string[] = await (proc as any).argv?.() || []
+            const pick = (args || []).find((a) => {
+              if (!a || typeof a !== 'string') return false
+              const low = a.toLowerCase()
+              // 过滤掉 -psn_ 等系统参数，只保留常见文档扩展名
+              if (low.startsWith('-psn_')) return false
+              return /\.(md|markdown|txt|pdf)$/.test(low)
+            })
+            if (pick) { void openFile2(pick) }
+          }
+        } catch {}
       }
     } catch {}
 
