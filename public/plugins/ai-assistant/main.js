@@ -19,7 +19,8 @@ const DEFAULT_CFG = {
 }
 
 // 会话只做最小持久化（可选），首版以内存为主
-let __AI_SESSION__ = { messages: [], docHash: '', docTitle: '' }
+let __AI_SESSION__ = { id: '', name: '默认会话', messages: [], docHash: '', docTitle: '' }
+let __AI_DB__ = null // { byDoc: { [hash]: { title, activeId, items:[{id,name,created,updated,messages:[]}] } } }
 let __AI_SENDING__ = false
 let __AI_LAST_REPLY__ = ''
 
@@ -30,6 +31,15 @@ async function loadCfg(context) {
 async function saveCfg(context, cfg) { try { await context.storage.set(CFG_KEY, cfg) } catch {} }
 async function loadSession(context) { try { const s = await context.storage.get(SES_KEY); return s && typeof s === 'object' ? s : { messages: [] } } catch { return { messages: [] } } }
 async function saveSession(context, ses) { try { await context.storage.set(SES_KEY, ses) } catch {} }
+
+async function loadSessionsDB(context) {
+  try { const db = await context.storage.get('ai.sessions'); if (db && typeof db === 'object') { __AI_DB__ = db; return __AI_DB__ } } catch {}
+  __AI_DB__ = { byDoc: {} }
+  return __AI_DB__
+}
+async function saveSessionsDB(context) { try { await context.storage.set('ai.sessions', __AI_DB__ || { byDoc: {} }) } catch {} }
+
+function gid(){ return 's_' + Math.random().toString(36).slice(2,10) }
 
 function clampCtx(s, n) { const t = String(s || ''); return t.length > n ? t.slice(t.length - n) : t }
 
@@ -141,12 +151,22 @@ function getDocMetaFromContent(context, content) {
 async function ensureSessionForDoc(context) {
   const content = String(context.getEditorValue() || '')
   const { title, hash } = getDocMetaFromContent(context, content)
-  if (!__AI_SESSION__ || __AI_SESSION__.docHash !== hash) {
-    __AI_SESSION__ = { messages: [], docHash: hash, docTitle: title }
-    try { await saveSession(context, __AI_SESSION__) } catch {}
+  // 加载会话库
+  if (!__AI_DB__) await loadSessionsDB(context)
+  if (!__AI_DB__.byDoc[hash]) {
+    __AI_DB__.byDoc[hash] = { title, activeId: '', items: [] }
   } else {
-    __AI_SESSION__.docTitle = title
+    __AI_DB__.byDoc[hash].title = title
   }
+  const bucket = __AI_DB__.byDoc[hash]
+  if (!bucket.activeId || !bucket.items.find(it => it.id === bucket.activeId)) {
+    const s = { id: gid(), name: '默认会话', created: Date.now(), updated: Date.now(), messages: [] }
+    bucket.items.unshift(s)
+    bucket.activeId = s.id
+  }
+  const cur = bucket.items.find(it => it.id === bucket.activeId)
+  __AI_SESSION__ = { id: cur.id, name: cur.name, messages: cur.messages.slice(), docHash: hash, docTitle: title }
+  await saveSessionsDB(context)
 }
 
 async function updateWindowTitle(context) {
@@ -171,6 +191,79 @@ async function refreshHeader(context){
   const selP = el('ai-model')
   if (selP) selP.value = cfg.model || ''
   await updateWindowTitle(context)
+  await refreshSessionSelect(context)
+}
+
+async function refreshSessionSelect(context) {
+  try {
+    const select = document.getElementById('ai-sel-session')
+    if (!select) return
+    await ensureSessionForDoc(context)
+    if (!__AI_DB__) await loadSessionsDB(context)
+    const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+    select.innerHTML = ''
+    for (const it of bucket.items) {
+      const opt = document.createElement('option')
+      opt.value = it.id
+      opt.textContent = it.name
+      if (it.id === bucket.activeId) opt.selected = true
+      select.appendChild(opt)
+    }
+  } catch {}
+}
+
+async function switchSessionBySelect(context) {
+  try {
+    const select = document.getElementById('ai-sel-session')
+    if (!select) return
+    const id = String(select.value || '')
+    if (!id) return
+    if (!__AI_DB__) await loadSessionsDB(context)
+    const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+    const it = bucket.items.find(x => x.id === id)
+    if (!it) return
+    bucket.activeId = id
+    __AI_SESSION__ = { id: it.id, name: it.name, messages: it.messages.slice(), docHash: __AI_SESSION__.docHash, docTitle: __AI_SESSION__.docTitle }
+    await saveSessionsDB(context)
+    const chat = document.getElementById('ai-chat'); if (chat) renderMsgs(chat)
+  } catch {}
+}
+
+async function createNewSession(context) {
+  try {
+    await ensureSessionForDoc(context)
+    if (!__AI_DB__) await loadSessionsDB(context)
+    const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+    const s = { id: gid(), name: '会话' + (bucket.items.length + 1), created: Date.now(), updated: Date.now(), messages: [] }
+    bucket.items.unshift(s)
+    bucket.activeId = s.id
+    __AI_SESSION__ = { id: s.id, name: s.name, messages: [], docHash: __AI_SESSION__.docHash, docTitle: __AI_SESSION__.docTitle }
+    await saveSessionsDB(context)
+    await refreshSessionSelect(context)
+    const chat = document.getElementById('ai-chat'); if (chat) renderMsgs(chat)
+  } catch {}
+}
+
+async function deleteCurrentSession(context) {
+  try {
+    await ensureSessionForDoc(context)
+    if (!__AI_DB__) await loadSessionsDB(context)
+    const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+    const idx = bucket.items.findIndex(x => x.id === bucket.activeId)
+    if (idx < 0) return
+    bucket.items.splice(idx, 1)
+    if (bucket.items.length === 0) {
+      const s = { id: gid(), name: '默认会话', created: Date.now(), updated: Date.now(), messages: [] }
+      bucket.items.push(s); bucket.activeId = s.id
+    } else {
+      bucket.activeId = bucket.items[0].id
+    }
+    const it = bucket.items.find(x => x.id === bucket.activeId)
+    __AI_SESSION__ = { id: it.id, name: it.name, messages: it.messages.slice(), docHash: __AI_SESSION__.docHash, docTitle: __AI_SESSION__.docTitle }
+    await saveSessionsDB(context)
+    await refreshSessionSelect(context)
+    const chat = document.getElementById('ai-chat'); if (chat) renderMsgs(chat)
+  } catch {}
 }
 
 async function mountWindow(context){
@@ -186,6 +279,9 @@ async function mountWindow(context){
     '   <label>模型</label> <input id="ai-model" placeholder="如 gpt-4o-mini" style="width:160px"/>',
     '  </div>',
     '  <div style="flex:1"></div>',
+    '  <label class="small">会话</label> <select id="ai-sel-session" style="max-width:180px"></select>',
+    '  <button class="btn" id="ai-s-new" title="新建会话">新建</button>',
+    '  <button class="btn" id="ai-s-del" title="删除当前会话">删除</button>',
     '  <button class="btn" id="ai-fit">自适应</button>',
     '  <button class="btn" id="q-continue">续写</button><button class="btn" id="q-polish">润色</button><button class="btn" id="q-proof">纠错</button><button class="btn" id="q-outline">提纲</button><button class="btn" id="ai-clear" title="清空本篇会话">清空</button>',
     ' </div>',
@@ -214,6 +310,10 @@ async function mountWindow(context){
   el.querySelector('#ai-copy').addEventListener('click',()=>{ copyLast() })
   el.querySelector('#ai-clear').addEventListener('click',()=>{ clearConversation(context) })
   el.querySelector('#ai-fit').addEventListener('click',()=>{ autoFitWindow(context, el) })
+  el.querySelector('#ai-s-new').addEventListener('click',()=>{ createNewSession(context) })
+  el.querySelector('#ai-s-del').addEventListener('click',()=>{ deleteCurrentSession(context) })
+  const selSession = el.querySelector('#ai-sel-session')
+  selSession?.addEventListener('change',()=>{ switchSessionBySelect(context) })
   el.querySelector('#q-continue').addEventListener('click',()=>{ quick(context,'续写') })
   el.querySelector('#q-polish').addEventListener('click',()=>{ quick(context,'润色') })
   el.querySelector('#q-proof').addEventListener('click',()=>{ quick(context,'纠错') })
@@ -327,36 +427,69 @@ async function doSend(context){
     userMsgs.forEach(m => finalMsgs.push(m))
 
     const url = (cfg.baseUrl||'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions'
-    const body = JSON.stringify({ model: cfg.model, messages: finalMsgs, stream: false })
+    const bodyObj = { model: cfg.model, messages: finalMsgs, stream: true }
+    const body = JSON.stringify(bodyObj)
     const headers = { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }
 
-    let ok = false, data = null, text = ''
-    // 优先使用 context.http.fetch（Tauri 插件），失败回退到 fetch
+    const chatEl = el('ai-chat')
+    const draft = document.createElement('div'); draft.className = 'msg a'; draft.textContent = ''
+    chatEl.appendChild(draft); chatEl.scrollTop = chatEl.scrollHeight
+
+    // 首选用原生 fetch 进行流式解析（SSE）
+    let finalText = ''
     try {
-      if (context.http && typeof context.http.fetch === 'function') {
-        const resp = await context.http.fetch(url, { method:'POST', headers, body })
-        if (resp && (resp.ok === true || (typeof resp.status === 'number' && resp.status >= 200 && resp.status < 300))) {
-          text = typeof resp.text === 'function' ? await resp.text() : (resp.data || '')
-          ok = true
-        } else {
-          text = typeof resp?.text === 'function' ? (await resp.text()) : (resp?.data || '')
+      const r2 = await fetch(url, { method:'POST', headers, body })
+      if (!r2.ok || !r2.body) { throw new Error('HTTP ' + r2.status) }
+      const reader = r2.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buf = ''
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() || ''
+        for (const p of parts) {
+          const line = p.trim()
+          if (!line) continue
+          const rows = line.split('\n').filter(Boolean)
+          for (const row of rows) {
+            const m = row.match(/^data:\s*(.*)$/)
+            if (!m) continue
+            const payload = m[1]
+            if (payload === '[DONE]') continue
+            try {
+              const j = JSON.parse(payload)
+              const delta = j?.choices?.[0]?.delta?.content || ''
+              if (delta) { finalText += delta; draft.textContent = finalText; chatEl.scrollTop = chatEl.scrollHeight }
+            } catch {}
+          }
         }
       }
-    } catch {}
-    if (!ok) {
-      const r2 = await fetch(url, { method:'POST', headers, body })
-      ok = r2.ok
-      text = await r2.text()
+    } catch (e) {
+      // 流式失败兜底：改非流式一次性请求
+      try {
+        const r3 = await fetch(url, { method:'POST', headers, body: JSON.stringify({ ...bodyObj, stream: false }) })
+        const text = await r3.text()
+        const data = text ? JSON.parse(text) : null
+        const ctt = data?.choices?.[0]?.message?.content || ''
+        finalText = ctt
+        draft.textContent = finalText
+      } catch (e2) { throw e2 }
     }
 
-    try { data = text ? JSON.parse(text) : null } catch { data = null }
-    if (!ok) throw new Error((data && (data.error?.message || data.message)) || ('HTTP 失败'))
-    const choice = (data && data.choices && data.choices[0]) || null
-    const ctt = choice && choice.message && typeof choice.message.content === 'string' ? choice.message.content : ''
-    __AI_LAST_REPLY__ = ctt || ''
+    __AI_LAST_REPLY__ = finalText || ''
     pushMsg('assistant', __AI_LAST_REPLY__ || '[空响应]')
     renderMsgs(el('ai-chat'))
-    try { await saveSession(context, __AI_SESSION__) } catch {}
+    // 同步会话库：写回当前文档的 active 会话
+    try {
+      await ensureSessionForDoc(context)
+      if (!__AI_DB__) await loadSessionsDB(context)
+      const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+      const it = bucket.items.find(x => x.id === bucket.activeId)
+      if (it) { it.messages = __AI_SESSION__.messages.slice(); it.updated = Date.now() }
+      await saveSessionsDB(context)
+    } catch {}
     try { const elw = el('ai-assist-win'); if (elw) autoFitWindow(context, elw) } catch {}
   } catch (e) {
     console.error(e)
@@ -376,6 +509,7 @@ async function applyLastToDoc(context){
 function copyLast(){ try { const s = String(__AI_LAST_REPLY__||''); if(!s) return; navigator.clipboard?.writeText(s) } catch {} }
 
 export async function openSettings(context){
+  ensureCss()
   const cfg = await loadCfg(context)
   let overlay = document.getElementById('ai-set-overlay')
   if (overlay) { overlay.remove() }
@@ -443,7 +577,12 @@ async function clearConversation(context) {
   try {
     await ensureSessionForDoc(context)
     __AI_SESSION__.messages = []
-    await saveSession(context, __AI_SESSION__)
+    // 同步到 DB
+    if (!__AI_DB__) await loadSessionsDB(context)
+    const bucket = __AI_DB__.byDoc[__AI_SESSION__.docHash]
+    const it = bucket.items.find(x => x.id === bucket.activeId)
+    if (it) { it.messages = [] ; it.updated = Date.now() }
+    await saveSessionsDB(context)
     const chat = el('ai-chat'); if (chat) renderMsgs(chat)
     context.ui.notice('会话已清空（仅当前文档）', 'ok', 1400)
   } catch {}
