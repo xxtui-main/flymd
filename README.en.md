@@ -13,7 +13,7 @@ A cross-platform WYSIWYG Markdown editor and PDF reader with image hosting, WebD
 
 ## ✨ Highlights
 
-- Ready to Use: Only 6MB installer, no bloat. Millisecond-level cold start, one-click code copy
+- Ready to Use: Only 7MB installer, no bloat. Millisecond-level cold start, one-click code copy
 - Clean Interface: Minimalist design with just menubar + editor, focused on content creation. Excellent startup and response speed
 - Library Feature: Support for designated folders, tree-view display of subfolders and documents, with document management; supports multiple libraries
 - Secure & Reliable: Local execution, no network connection, automatic HTML sanitization in preview

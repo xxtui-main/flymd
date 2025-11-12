@@ -2,6 +2,10 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v0.2.6
+- Fixed: Missing LaTeX symbols in Reading mode rendering
+- Improved: Mermaid is now supported when exporting to Word (DOCX/WPS)
+
 ## Update v0.2.5 
 - Added: Mermaid zoom support in Reading/WYSIWYG modes
 - Added: Export Mermaid as standalone SVG
@@ -17,7 +21,7 @@
 ## Update v0.2.3
 - Added: Custom font support (Theme panel). Supports picking system fonts and installing user fonts for use in the app.
 - Added: Zoom in/out via Ctrl/Cmd + mouse wheel in Edit, Reading and WYSIWYG modes.
-- Fixed: Repeated clicks in Library mode no longer create duplicate menus.
+- Fixed: Clicking File and Mode menus in succession sometimes failed to open their menu items.
 - Fixed: macOS - Documents failed to load after application launch.
 - Improved: Unified centered layout between Edit and Reading/WYSIWYG modes.
 
