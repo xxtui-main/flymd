@@ -194,7 +194,7 @@ const dict = {
     'ext.enabled.tag.off': '未启用',
     'ext.author': '作者:',
     'ext.homepage': '主页',
-    'ext.market.loading': '市场加载中…',
+    'ext.market.loading': '扩展市场正在加载…',
   },
   en: {
     'menu.file': 'File',
