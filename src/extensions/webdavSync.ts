@@ -596,20 +596,8 @@ async function listRemoteRecursively(
       if (f.isDir) {
         // 记录目录条目属性（若服务器提供）
         dirsProps[r] = { mtime: f.mtime, etag: f.etag }
-        // 是否需要深入扫描该子目录
-        let needDive = true
-        const last = opts?.lastDirs?.[r]
-        if (last && (last.etag || last.mtime !== undefined)) {
-          const sameEtag = last.etag && f.etag && last.etag === f.etag
-          const sameMtime = last.mtime !== undefined && f.mtime !== undefined && Math.abs((last.mtime || 0) - (f.mtime || 0)) <= 1000
-          if (sameEtag || sameMtime) {
-            needDive = false
-            await syncLog('[remote-prune] 跳过未变化目录: ' + r)
-          }
-        }
-        if (needDive) {
-          subDirs.push({ name: f.name, rel: r, needDive })
-        }
+        // 暂时禁用目录剪枝优化，确保检测到所有文件变化（包括重命名）
+        subDirs.push({ name: f.name, rel: r, needDive: true })
       } else {
         fileCount++
         map.set(r, { path: r, mtime: toEpochMs(f.mtime), size: 0, etag: f.etag })
