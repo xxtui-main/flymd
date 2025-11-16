@@ -5630,7 +5630,26 @@ function bindEvents() {
 
     function norm(s: string) { return (_findCase?.checked ? s : s.toLowerCase()) }
     function getSel() { return { s: editor.selectionStart >>> 0, e: editor.selectionEnd >>> 0 } }
-    function setSel(s: number, e: number) { editor.selectionStart = s; editor.selectionEnd = e; try { editor.focus() } catch {} }
+    // 设置选区并将其滚动到视口中间附近（仅编辑模式 textarea）
+    function setSel(s: number, e: number) {
+      try {
+        const ta = editor as HTMLTextAreaElement
+        const len = String(ta.value || '').length >>> 0
+        const start = s >>> 0
+        ta.selectionStart = start
+        ta.selectionEnd = e >>> 0
+        try { ta.focus() } catch {}
+        if (len > 0 && ta.scrollHeight > ta.clientHeight + 4) {
+          const ratio = Math.max(0, Math.min(1, start / len))
+          const target = ratio * ta.scrollHeight
+          const view = ta.clientHeight
+          ta.scrollTop = Math.max(0, target - view * 0.4)
+        }
+      } catch {
+        // 降级路径：至少确保选区被设置
+        try { editor.selectionStart = s; editor.selectionEnd = e } catch {}
+      }
+    }
 
     // 阅读模式查找：使用浏览器原生查找 API
     let _previewFindIndex = -1
