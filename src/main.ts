@@ -685,6 +685,8 @@ let currentFilePath: string | null = null
 let dirty = false; // 是否有未保存更改（此处需加分号，避免下一行以括号开头被解析为对 false 的函数调用）
 // 暴露一个轻量只读查询函数，避免直接访问变量引起耦合
 (window as any).flymdIsDirty = () => dirty
+// 最近一次粘贴组合键：normal=Ctrl+V, plain=Ctrl+Shift+V；用于在 paste 事件中区分行为
+let _lastPasteCombo: 'normal' | 'plain' | null = null
 
 // 配置存储（使用 tauri store）
 let store: Store | null = null
@@ -4730,6 +4732,24 @@ async function testUploaderConnectivity(endpoint: string): Promise<{ ok: boolean
     } catch (e: any) { return { ok: false, status: 0, note: e?.message || "网络失败" } }
   } catch (e: any) { return { ok: false, status: 0, note: e?.message || "异常" } }
 }
+
+// 抓取网页 <title>，用于将纯 URL 粘贴转换为 [标题](url)
+async function fetchPageTitle(url: string): Promise<string | null> {
+  try {
+    const html = await fetchTextSmart(url)
+    if (!html) return null
+    const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+    if (!m) return null
+    let title = m[1] || ''
+    // 归一化空白，避免标题里带有多行/多空格
+    title = title.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!title) return null
+    return title
+  } catch {
+    return null
+  }
+}
+
 async function openUploaderDialog() {
   const overlay = document.getElementById('uploader-overlay') as HTMLDivElement | null
   const form = overlay?.querySelector('#upl-form') as HTMLFormElement | null
@@ -6666,6 +6686,15 @@ function bindEvents() {
         }
       }
     } catch {}
+    // 记录最近一次 Ctrl/Cmd(+Shift)+V 组合键（仅在编辑器聚焦时生效，用于区分普通粘贴与纯文本粘贴）
+    try {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        const active = document.activeElement as HTMLElement | null
+        _lastPasteCombo = (active === (editor as any))
+          ? (e.shiftKey ? 'plain' : 'normal')
+          : null
+      }
+    } catch {}
     // 编辑快捷键（全局）：插入链接 / 加粗 / 斜体
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); guard(insertLink)(); return }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); await toggleWysiwyg(); return }
@@ -6844,12 +6873,18 @@ function bindEvents() {
       const dt = e.clipboardData
       if (!dt) return
 
+      // 统一提取常用数据，便于后续分支复用
+      const types = dt.types ? Array.from(dt.types) : []
+      const hasHtmlType = types.some(t => String(t).toLowerCase() === 'text/html')
+      const html = hasHtmlType ? dt.getData('text/html') : ''
+      const plainText = dt.getData('text/plain') || dt.getData('text') || ''
+      const plainTrim = plainText.trim()
+      const pasteCombo = _lastPasteCombo
+      // 使用一次即清空，避免状态污染后续粘贴
+      _lastPasteCombo = null
+
       // 1) 处理 HTML → Markdown（像 Typora 那样保留格式）
       try {
-        const types = dt.types ? Array.from(dt.types) : []
-        const hasHtmlType = types.some(t => String(t).toLowerCase() === 'text/html')
-        const html = hasHtmlType ? dt.getData('text/html') : ''
-        const plainText = dt.getData('text/plain') || dt.getData('text') || ''
         if (html && html.trim()) {
           // 粗略判断是否为“富文本”而非纯文本包装，避免过度拦截
           const looksRich = /<\s*(p|div|h[1-6]|ul|ol|li|pre|table|img|a|blockquote|strong|em|b|i|code)[\s>]/i.test(html)
@@ -6887,12 +6922,58 @@ function bindEvents() {
             const finalText = (mdText && mdText.trim()) ? mdText : plainText
             if (finalText) {
               insertAtCursor(finalText)
-              if (mode === 'preview') await renderPreview()
+              if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
             }
             return
           }
         }
       } catch {}
+
+      // 1b) Ctrl+V 且仅有单个 URL：插入占位提示 [正在抓取title]，异步抓取网页标题后替换为 [标题](url)
+      if (pasteCombo === 'normal') {
+        try {
+          const url = plainTrim
+          // 仅在剪贴板内容是“单行 http/https URL”时触发，避免误伤普通文本
+          if (url && /^https?:\/\/[^\s]+$/i.test(url)) {
+            e.preventDefault()
+            const placeholder = '[正在抓取title]'
+            // 先插入占位提示，让用户感知到粘贴正在进行；此处不触发预览渲染，避免多次重绘
+            insertAtCursor(placeholder)
+
+            let finalText = url
+            try {
+              const title = await fetchPageTitle(url)
+              if (title && title.trim()) {
+                // 基本转义标题中的方括号，避免破坏 Markdown 语法
+                const safeTitle = title.replace(/[\[\]]/g, '\\$&')
+                finalText = `[${safeTitle}](${url})`
+              }
+            } catch {}
+
+            try {
+              const v = String((editor as HTMLTextAreaElement).value || '')
+              const idx = v.indexOf(placeholder)
+              if (idx >= 0) {
+                const before = v.slice(0, idx)
+                const after = v.slice(idx + placeholder.length)
+                const next = before + finalText + after
+                ;(editor as HTMLTextAreaElement).value = next
+                const caret = before.length + finalText.length
+                ;(editor as HTMLTextAreaElement).selectionStart = caret
+                ;(editor as HTMLTextAreaElement).selectionEnd = caret
+                dirty = true
+                refreshTitle()
+                refreshStatus()
+              } else {
+                // 占位符已被用户编辑删除，退回为在当前位置插入最终文本
+                insertAtCursor(finalText)
+              }
+              if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
+            } catch {}
+            return
+          }
+        } catch {}
+      }
 
       // 2) 若包含图片文件，使用占位 + 异步上传
       const items = Array.from(dt.items || [])
