@@ -672,7 +672,234 @@ context.ui.notice('PDF 导出完成', 'ok');
 **注意：**
 - 仅在桌面版（Tauri 应用）可用，依赖内置的 PDF 导出能力。
 - `target` 应为完整文件路径（包含 `.pdf` 扩展名），若路径无效会抛出错误。
-- 插件无需关心渲染细节，导出内容与应用中“另存为 PDF”的效果一致。
+- 插件无需关心渲染细节，导出内容与应用中"另存为 PDF"的效果一致。
+
+### context.registerAPI
+
+注册插件 API，允许其他插件调用。用于将当前插件作为"基础设施插件"对外提供服务。
+
+```javascript
+export function activate(context) {
+  // 注册工具函数 API
+  context.registerAPI('my-utils', {
+    // 导出工具函数
+    formatDate: (date) => {
+      return date.toISOString().split('T')[0];
+    },
+
+    chunk: (array, size) => {
+      const chunks = [];
+      for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size));
+      }
+      return chunks;
+    },
+
+    debounce: (fn, delay) => {
+      let timer;
+      return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+      };
+    }
+  });
+
+  context.ui.notice('工具库 API 已注册', 'ok');
+}
+```
+
+**参数说明：**
+- `namespace`（string）：API 命名空间，必须唯一。建议使用插件 ID 或描述性名称
+- `api`（any）：要导出的 API 对象，可以是函数、对象、类等任何 JavaScript 值
+
+**注意事项：**
+- 命名空间必须唯一，如果已被其他插件占用，注册会失败并在控制台输出警告
+- 插件卸载时，已注册的 API 会自动清理
+- 建议在 `activate` 函数中注册 API，确保插件启用时 API 可用
+
+### context.getPluginAPI
+
+获取其他插件注册的 API。
+
+```javascript
+export function activate(context) {
+  // 尝试获取工具库 API
+  const utils = context.getPluginAPI('my-utils');
+
+  if (!utils) {
+    context.ui.notice('需要先安装 my-utils 插件', 'err');
+    return;
+  }
+
+  // 使用其他插件提供的 API
+  const today = utils.formatDate(new Date());
+  context.ui.notice('今天是：' + today, 'ok');
+
+  // 使用 chunk 函数
+  const numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const chunks = utils.chunk(numbers, 3);
+  console.log('分块结果：', chunks); // [[1,2,3], [4,5,6], [7,8,9]]
+}
+```
+
+**参数说明：**
+- `namespace`（string）：要获取的 API 命名空间
+
+**返回值：**
+- 如果 API 存在，返回对应的 API 对象
+- 如果 API 不存在，返回 `null`
+
+**最佳实践：**
+- 使用前检查 API 是否存在（返回值是否为 `null`）
+- 如果依赖其他插件，可以在 `manifest.json` 中说明依赖关系
+- 建议为基础设施插件提供完整的文档说明
+
+### 插件联动实战示例
+
+#### 场景：基础工具库 + 数据处理插件
+
+**1. 基础工具库插件（lodash-lite）**
+
+```json
+// lodash-lite/manifest.json
+{
+  "id": "lodash-lite",
+  "name": "Lodash 工具库（轻量版）",
+  "version": "1.0.0",
+  "description": "为其他插件提供常用工具函数",
+  "main": "main.js"
+}
+```
+
+```javascript
+// lodash-lite/main.js
+export function activate(context) {
+  // 注册工具函数 API
+  context.registerAPI('lodash', {
+    // 数组处理
+    chunk: (arr, size) => {
+      const result = [];
+      for (let i = 0; i < arr.length; i += size) {
+        result.push(arr.slice(i, i + size));
+      }
+      return result;
+    },
+
+    uniq: (arr) => [...new Set(arr)],
+
+    flatten: (arr) => arr.flat(),
+
+    // 对象处理
+    pick: (obj, keys) => {
+      const result = {};
+      keys.forEach(key => {
+        if (key in obj) result[key] = obj[key];
+      });
+      return result;
+    },
+
+    // 字符串处理
+    capitalize: (str) => str.charAt(0).toUpperCase() + str.slice(1).toLowerCase(),
+
+    camelCase: (str) => {
+      return str.replace(/[-_\s]+(.)?/g, (_, c) => c ? c.toUpperCase() : '');
+    },
+
+    // 函数工具
+    debounce: (fn, delay) => {
+      let timer;
+      return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+      };
+    }
+  });
+
+  context.ui.notice('Lodash 工具库已加载', 'ok', 1500);
+}
+```
+
+**2. 数据处理插件（使用工具库）**
+
+```json
+// markdown-processor/manifest.json
+{
+  "id": "markdown-processor",
+  "name": "Markdown 批处理工具",
+  "version": "1.0.0",
+  "description": "批量处理 Markdown 文件（依赖 lodash-lite）",
+  "main": "main.js"
+}
+```
+
+```javascript
+// markdown-processor/main.js
+export function activate(context) {
+  // 获取工具库 API
+  const _ = context.getPluginAPI('lodash');
+
+  if (!_) {
+    context.ui.notice('需要先安装 lodash-lite 插件', 'err', 3000);
+    return;
+  }
+
+  // 添加菜单项
+  context.addMenuItem({
+    label: '批处理',
+    children: [
+      {
+        label: '提取所有标题',
+        onClick: async () => {
+          const content = context.getEditorValue();
+          const lines = content.split('\n');
+
+          // 提取标题行
+          const headers = lines.filter(line => line.trim().startsWith('#'));
+
+          // 去重（使用 lodash API）
+          const uniqueHeaders = _.uniq(headers);
+
+          context.ui.notice(`找到 ${uniqueHeaders.length} 个唯一标题`, 'ok');
+          console.log('标题列表：', uniqueHeaders);
+        }
+      },
+      {
+        label: '格式化链接',
+        onClick: () => {
+          const content = context.getEditorValue();
+          const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+          let links = [];
+          let match;
+          while ((match = linkRegex.exec(content)) !== null) {
+            links.push({ text: match[1], url: match[2] });
+          }
+
+          // 去重（使用 lodash API）
+          const uniqueLinks = _.uniq(links.map(l => l.url));
+
+          context.ui.notice(`文档包含 ${uniqueLinks.length} 个不同链接`, 'ok');
+        }
+      }
+    ]
+  });
+
+  context.ui.notice('Markdown 批处理工具已加载', 'ok', 1500);
+}
+```
+
+**工作流程：**
+
+1. 用户先安装 `lodash-lite` 基础工具库插件
+2. `lodash-lite` 激活时通过 `registerAPI('lodash', ...)` 注册工具函数
+3. 用户安装并启用 `markdown-processor` 插件
+4. `markdown-processor` 通过 `getPluginAPI('lodash')` 获取工具函数
+5. 如果工具库不存在，提示用户安装；否则正常使用工具函数
+
+**优势：**
+- 基础功能复用，避免重复实现
+- 插件体积更小，只需实现业务逻辑
+- 生态建设：基础设施插件 + 业务插件分层架构
 
 ## 主题扩展（Theme）
 

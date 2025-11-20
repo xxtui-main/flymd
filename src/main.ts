@@ -723,6 +723,9 @@ const builtinPlugins: InstalledPlugin[] = [
 ]
 const activePlugins = new Map<string, any>() // id -> module
 const pluginMenuAdded = new Map<string, boolean>() // 限制每个插件仅添加一个菜单项
+// 插件 API 注册表：namespace -> { pluginId, api }
+type PluginAPIRecord = { pluginId: string; api: any }
+const pluginAPIRegistry = new Map<string, PluginAPIRecord>()
 let _extOverlayEl: HTMLDivElement | null = null
 let _extListHost: HTMLDivElement | null = null
 let _extInstallInput: HTMLInputElement | null = null
@@ -8700,6 +8703,53 @@ async function activatePlugin(p: InstalledPlugin): Promise<void> {
         return () => {}
       }
     },
+    // 插件间通信 API
+    registerAPI: (namespace: string, api: any) => {
+      try {
+        if (!namespace || typeof namespace !== 'string') {
+          console.warn(`[Plugin ${p.id}] registerAPI: namespace 必须是非空字符串`)
+          return
+        }
+
+        // 检查命名空间是否已被占用
+        const existing = pluginAPIRegistry.get(namespace)
+        if (existing && existing.pluginId !== p.id) {
+          console.warn(
+            `[Plugin ${p.id}] registerAPI: 命名空间 "${namespace}" 已被插件 "${existing.pluginId}" 占用，` +
+            `请使用不同的命名空间或卸载冲突的插件`
+          )
+          return
+        }
+
+        // 注册 API
+        pluginAPIRegistry.set(namespace, {
+          pluginId: p.id,
+          api: api
+        })
+
+        console.log(`[Plugin ${p.id}] 已注册 API: ${namespace}`)
+      } catch (e) {
+        console.error(`[Plugin ${p.id}] registerAPI 失败:`, e)
+      }
+    },
+    getPluginAPI: (namespace: string) => {
+      try {
+        if (!namespace || typeof namespace !== 'string') {
+          console.warn(`[Plugin ${p.id}] getPluginAPI: namespace 必须是非空字符串`)
+          return null
+        }
+
+        const record = pluginAPIRegistry.get(namespace)
+        if (!record) {
+          return null
+        }
+
+        return record.api
+      } catch (e) {
+        console.error(`[Plugin ${p.id}] getPluginAPI 失败:`, e)
+        return null
+      }
+    },
   }
   try { (window as any).__pluginCtx__ = (window as any).__pluginCtx__ || {}; (window as any).__pluginCtx__[p.id] = ctx } catch {}
   if (typeof mod?.activate === 'function') {
@@ -8720,6 +8770,19 @@ async function deactivatePlugin(id: string): Promise<void> {
       if (pluginContextMenuItems[i]?.pluginId === id) {
         pluginContextMenuItems.splice(i, 1)
       }
+    }
+  } catch {}
+  // 移除插件注册的所有 API
+  try {
+    const namespacesToRemove: string[] = []
+    for (const [namespace, record] of pluginAPIRegistry.entries()) {
+      if (record.pluginId === id) {
+        namespacesToRemove.push(namespace)
+      }
+    }
+    for (const namespace of namespacesToRemove) {
+      pluginAPIRegistry.delete(namespace)
+      console.log(`[Plugin ${id}] 已移除 API: ${namespace}`)
     }
   } catch {}
 }
