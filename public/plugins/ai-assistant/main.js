@@ -1152,7 +1152,16 @@ async function doSend(context){
     await ensureSessionForDoc(context)
     const doc = String(context.getEditorValue() || '')
     const docCtx = clampCtx(doc, Number(cfg.limits?.maxCtxChars||6000))
-    const system = '你是专业的中文写作助手，回答要简洁、实用、可直接落地。'
+
+    // 添加当前时间上下文
+    const now = new Date()
+    const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+    const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const weekday = weekdays[now.getDay()]
+    const timeContext = `今天是 ${currentDate} ${weekday} ${currentTime}`
+
+    const system = `你是专业的中文写作助手，回答要简洁、实用、可直接落地。当前时间：${timeContext}`
     const userMsgs = __AI_SESSION__.messages
     const finalMsgs = [ { role:'system', content: system }, { role:'user', content: '文档上下文：\n\n' + docCtx } ]
     userMsgs.forEach(m => finalMsgs.push(m))
